@@ -1,0 +1,193 @@
+---
+title: Self-Learning SQL Agent Architecture
+---
+
+flowchart TD
+    %% ── Entry ──────────────────────────────────────────────────
+    subgraph ENTRY["Entry Point"]
+        Demo["run_demo.py
+        ─────────────────────
+        5 intentionally broken
+        SQL queries fed in order"]
+    end
+
+    %% ── Agent Core ─────────────────────────────────────────────
+    subgraph CORE["Agent Core · agent/core.py"]
+        Agent["SQLLearningAgent
+        ─────────────────────────────────────
+        improve(original_query) → dict
+        _build_prompt(...)
+        _call_claude(user_message)
+        _get_schema()"]
+    end
+
+    %% ── Supporting Modules ──────────────────────────────────────
+    subgraph MODULES["Supporting Modules"]
+        direction TB
+
+        Exec["SQLExecutor
+        agent/sql_executor.py
+        ───────────────────────
+        execute(query)
+          → (rows, None)
+          → (None, error_msg)
+        setup_sample_db()
+        get_schema()"]
+
+        Cls["ErrorClassifier
+        agent/classifier.py
+        ───────────────────────
+        classify(error_message)
+          → error_type string
+
+        Patterns matched:
+        · syntax error
+        · no such table
+        · no such column
+        · datatype mismatch
+        · ambiguous column
+        · UNIQUE constraint
+        · fallback: unknown"]
+
+        Mem["MemoryStore
+        agent/memory.py
+        ───────────────────────
+        record_failure(query,
+          error_type, error_msg)
+            → failure_id
+        record_success(id,
+          fixed_query, desc,
+          iterations, skill)
+        get_similar_failures(
+          error_type, limit=3)
+            → list[dict]
+        get_error_stats()
+            → list[dict]"]
+
+        Skill["SkillManager
+        agent/skill_manager.py
+        ───────────────────────
+        load_skill(error_type)
+            → {meta, body} | None
+        save_skill(error_type,
+          description, body,
+          existing_meta)
+        update_success_rate(
+          error_type, was_success)
+        list_skills()
+            → list[dict]"]
+    end
+
+    %% ── External API ────────────────────────────────────────────
+    subgraph EXTERNAL["External"]
+        Claude["Anthropic API
+        model: claude-sonnet-4-6
+        max_tokens: 1024
+        ────────────────────────
+        System prompt: repair agent
+        XML output tags:
+        · &lt;fixed_query&gt;
+        · &lt;fix_explanation&gt;
+        · &lt;skill_body&gt;"]
+    end
+
+    %% ── Persistent Storage ──────────────────────────────────────
+    subgraph STORAGE["Persistent Storage"]
+        direction LR
+
+        SampleDB[("data/sample.db
+        ─────────────────
+        categories
+          id, name
+        products
+          id, name, price
+          category_id, stock
+        customers
+          id, name, email
+          created_at
+        orders
+          id, customer_id
+          product_id, quantity
+          total, order_date")]
+
+        MemJSON[("data/memory.json
+        ─────────────────
+        failures: [
+          id, original_query
+          error_type
+          error_message
+          fixed_query
+          fix_description
+          iterations
+          success (bool)
+          skill_generated
+          timestamp
+        ]
+        error_patterns: {
+          error_type: {
+            occurrences,
+            last_seen
+          }
+        }")]
+
+        SkillFiles[("skills/
+        ─────────────────
+        &lt;error_type&gt;.md
+        ─────────────────
+        frontmatter:
+          name
+          description
+          error_types[]
+          success_rate
+          usage_count
+          created_at
+          last_updated
+        ─────────────────
+        body (Claude-written):
+          ## Strategy
+          ## Common Patterns
+          ## Example")]
+    end
+
+    %% ── Config ──────────────────────────────────────────────────
+    subgraph CONFIG["config.py"]
+        Cfg["ANTHROPIC_MODEL
+        SKILLS_DIR
+        DATA_DIR
+        MEMORY_PATH
+        SAMPLE_DB_PATH
+        MAX_ITERATIONS = 4"]
+    end
+
+    %% ── Edges ───────────────────────────────────────────────────
+    Demo        -->|"broken query string"| Agent
+
+    Agent       -->|"execute / get_schema"| Exec
+    Agent       -->|"classify(error_msg)"| Cls
+    Agent       -->|"record / retrieve"| Mem
+    Agent       -->|"load / save / update"| Skill
+    Agent      <-->|"prompt → response"| Claude
+
+    Exec       <-->|"SQL read/write"| SampleDB
+    Mem        <-->|"JSON read/write"| MemJSON
+    Skill      <-->|"Markdown read/write"| SkillFiles
+
+    CONFIG      -.->|"paths & constants"| Agent
+    CONFIG      -.->|"SAMPLE_DB_PATH"| Exec
+    CONFIG      -.->|"MEMORY_PATH"| Mem
+    CONFIG      -.->|"SKILLS_DIR"| Skill
+
+    %% ── Styles ──────────────────────────────────────────────────
+    classDef entry    fill:#1e3a5f,stroke:#4a90d9,color:#e8f4fd
+    classDef core     fill:#1a3a2a,stroke:#4caf50,color:#e8f5e9
+    classDef module   fill:#2a2a1e,stroke:#f0c040,color:#fefde8
+    classDef external fill:#3a1a2a,stroke:#e040fb,color:#fce4ff
+    classDef storage  fill:#1a1a3a,stroke:#7986cb,color:#e8eaf6
+    classDef config   fill:#2a1a1a,stroke:#ef5350,color:#ffebee
+
+    class Demo entry
+    class Agent core
+    class Exec,Cls,Mem,Skill module
+    class Claude external
+    class SampleDB,MemJSON,SkillFiles storage
+    class Cfg config
